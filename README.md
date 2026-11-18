@@ -1,63 +1,214 @@
-# Shodh a Code — Backend Engineer Intern assessment
+# Shodh a Code
 
-**Status: substantial educational implementation, NOT a verified complete submission.** Read `docs/ARCHITECTURE.md` for known gaps before submitting.
+A backend for an online coding contest platform, built as part of the Shodh Backend Engineer Intern assessment.
 
-## Quick start
+The application allows students to join contests, submit Python solutions, and view their results on a leaderboard. Organizers can create contests and rejudge submissions. Code execution happens asynchronously through a separate worker and Docker-based runner.
 
-Prerequisites: Docker Desktop with Linux containers and WSL2. Run from project root:
+## Tech Stack
+
+- **Backend:** Python, FastAPI, SQLAlchemy
+- **Database:** PostgreSQL
+- **Migrations:** Alembic
+- **Code execution:** Docker
+- **Infrastructure:** Docker Compose
+- **Testing:** Pytest and Python concurrency scripts
+
+## Getting Started
+
+### Prerequisites
+
+- Docker Desktop
+- Docker Compose
+- WSL2 (for Windows users)
+- Python 3 (for running local test scripts)
+
+Clone the repository and navigate to the project directory.
+
+Create a `.env` file in the project root and configure the development authentication secret:
+
+```env
+DEV_AUTH_SECRET=replace_with_a_long_random_secret
+```
+
+Keep `.env` out of version control.
+
+Start the application:
 
 ```bash
 docker compose up --build
 ```
 
-First-time runner image pull (in a separate terminal):
+The application automatically runs database migrations and seeds the initial data.
+
+The API documentation is available at:
+
+http://localhost:8000/docs
+
+Health endpoint:
+
+http://localhost:8000/health
+
+The runner uses `python:3.12-alpine` for executing submitted solutions. If the image is not available locally, pull it using:
 
 ```bash
 docker pull python:3.12-alpine
 ```
 
-API: http://localhost:8000/docs. Health: http://localhost:8000/health.
+## Development Users
 
-Seed identities (`X-User-ID`): 1 Alice (org 1 organizer), 2 Bob (org 1 participant), 3 Olivia (org 2 organizer), 4 Mallory (org 2 participant). Contests 1 and 2. Problems 1, 2, 3.
+The application comes with seeded users for testing organization and role-based access.
 
-## Example flow (PowerShell)
+| User ID | Name | Organization | Role |
+|---|---|---|---|
+| 1 | Alice | 1 | Organizer |
+| 2 | Bob | 1 | Participant |
+| 3 | Olivia | 2 | Organizer |
+| 4 | Mallory | 2 | Participant |
+
+The seeded data also includes two contests and three problems.
+
+For local development, requests use `X-User-ID` and a corresponding `X-Dev-Token`. The token is an HMAC-SHA256 digest generated from the development secret and the user identity.
+
+For example, to generate a token for user 2 in PowerShell:
 
 ```powershell
-curl.exe -X POST http://localhost:8000/contests/1/join -H "X-User-ID: 2"
-$body = '{"problem_id":1,"language":"python3","code":"a,b=map(int,input().split());print(a+b)"}'
-curl.exe -X POST http://localhost:8000/contests/1/submissions -H "X-User-ID: 2" -H "Idempotency-Key: demo-001" -H "Content-Type: application/json" --data-raw $body
-curl.exe http://localhost:8000/submissions/1 -H "X-User-ID: 2"
-curl.exe http://localhost:8000/contests/1/leaderboard -H "X-User-ID: 2"
+$env:DEV_AUTH_SECRET = "the_same_secret_used_in_your_env_file"
+
+$token = python -c "import os,hmac; print(hmac.new(os.environ['DEV_AUTH_SECRET'].encode(), b'user:2', 'sha256').hexdigest())"
 ```
 
-On Windows PowerShell, JSON escaping through curl.exe can be awkward; use Swagger at `/docs` or `Invoke-RestMethod` if needed.
+The API checks the token before allowing the request. Organization membership and role permissions are checked separately.
 
-## Development checks
+This authentication mechanism is intended for local development and assessment testing, not production use.
+
+## API Endpoints
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/health` | Health check |
+| GET | `/contests` | List accessible contests |
+| POST | `/organizations/{org_id}/contests` | Create a contest |
+| GET | `/contests/{id}/problems` | List contest problems |
+| POST | `/contests/{id}/join` | Join a contest |
+| POST | `/contests/{id}/submissions` | Submit a solution |
+| GET | `/submissions/{id}` | Check submission status |
+| POST | `/submissions/{id}/rejudge` | Rejudge a submission |
+| GET | `/contests/{id}/leaderboard` | View contest rankings |
+
+Interactive API documentation is available through Swagger UI at `/docs`.
+
+## How Submission Processing Works
+
+When a participant submits code, the API validates the request and stores the submission in PostgreSQL.
+
+A background worker picks up pending attempts and sends them to the runner. The runner executes the submitted Python program inside a restricted Docker container and returns the result.
+
+The worker then updates the attempt with its verdict.
+
+The implementation includes:
+
+- Idempotency keys to avoid duplicate submissions during retries.
+- Database row locking to coordinate multiple workers.
+- Leases and claim tokens to support recovery after worker failures.
+- Separate judging attempts for rejudging submissions.
+- Organization and role checks for protected operations.
+
+The runner applies resource limits and disables networking for submitted programs. Its isolation model and limitations are described in `docs/SECURITY.md`.
+
+## Running Tests
+
+Run the available test suite:
 
 ```bash
 docker compose exec api pytest -q
 ```
 
-Check two independent workers:
+To run two worker instances:
 
 ```bash
 docker compose up -d --scale worker=2
 ```
 
-These commands are **not** a substitute for race tests and final-database assertions required by the assessment.
+The project also includes scripts for testing concurrent submissions and worker coordination.
 
-## Model
+From the project root, with the API running and `DEV_AUTH_SECRET` configured in the terminal:
 
-`users`, `organizations`, `memberships`, `contests`, `participations`, `problems`, `problem_versions`, `test_suites`, `test_cases`, `submissions`, `attempts`.
+```bash
+python test_concurrency.py
+python test_multi_worker.py
+```
 
-## API
+These scripts were used to verify idempotent submission handling and concurrent processing with multiple workers.
 
-`GET /contests`, `POST /organizations/{org_id}/contests`, `GET /contests/{id}/problems`, `POST /contests/{id}/join`, `POST /contests/{id}/submissions`, `GET /submissions/{id}`, `POST /submissions/{id}/rejudge`, `GET /contests/{id}/leaderboard`.
+## Performance Testing
 
-## Evidence
+A local benchmark was run with 20 submissions and a concurrency level of 5.
 
-No real performance or concurrency numbers are included: these must be measured and recorded by the candidate on their machine, with commit, machine resources, configuration, dataset and execution mode. The assessment additionally requires a <=4-page report and optional <=1-page AI assistance disclosure.
+| Metric | Result |
+|---|---|
+| Total submissions | 20 |
+| Concurrent requests | 5 |
+| Submission throughput | 47.82 requests/sec |
+| API p50 latency | 102.73 ms |
+| API p95 latency | 117.34 ms |
+| API p99 latency | 118.15 ms |
+| Completed judgements | 20/20 |
+| HTTP errors | 0 |
+| Submit-to-verdict p50 | 14.66 seconds |
+| Submit-to-verdict p95 | 24.30 seconds |
 
-## Development caution
+All 20 submissions received an accepted verdict.
 
-The Docker runner uses the host Docker socket and should only be used with controlled local examples on a disposable development host. See `docs/SECURITY.md`.
+The submit-to-verdict measurements include queue waiting, execution time, and polling delay. They should not be interpreted as isolated execution latency.
+
+To run the benchmark again:
+
+```bash
+python benchmarks/benchmark_shodh.py
+```
+
+The benchmark saves its results in the `evidence/` directory.
+
+A PostgreSQL query-plan inspection was also performed for the worker's attempt lookup. The query completed in approximately 0.108 ms on the tested dataset of 60 attempts.
+
+This was a small local test, so the results are not intended to represent production-scale performance.
+
+## Project Structure
+
+```text
+app/
+  main.py          # API endpoints
+  models.py        # Database models
+  worker.py        # Background judging worker
+  runner.py        # Docker-based code execution
+  seed.py          # Development seed data
+
+alembic/           # Database migrations
+benchmarks/        # Performance benchmark
+docs/              # Architecture and security notes
+evidence/          # Test results, logs and query plans
+
+docker-compose.yml
+Dockerfile
+test_concurrency.py
+test_multi_worker.py
+README.md
+```
+
+## Known Limitations
+
+This is an assessment implementation rather than a production-ready contest platform.
+
+The development authentication mechanism uses a locally configured secret and is not a replacement for a full production identity system.
+
+The runner gateway requires access to the Docker socket to create execution containers. Submitted programs are executed in separate restricted containers, but the gateway itself remains a privileged component.
+
+The performance results were collected on a small local dataset. Additional load testing and isolation hardening would be necessary before using the system in production.
+
+Further implementation details and known gaps are documented in `docs/ARCHITECTURE.md` and `docs/SECURITY.md`.
+
+## Assessment Notes
+
+The repository includes the application code, database migrations, seed data, Docker configuration, test scripts, and locally collected evidence.
+
+The focus of the implementation is correctness under concurrent submissions, asynchronous judging, recovery from worker failures, and enforcing organization-level access controls.
