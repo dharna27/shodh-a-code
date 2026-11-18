@@ -1,0 +1,26 @@
+{
+  "run_id": "c138f32814",
+  "requests": 20,
+  "concurrency": 5,
+  "submission_duration_seconds": 0.418,
+  "throughput_requests_per_second": 47.82,
+  "http_202": 20,
+  "http_errors": 0,
+  "api_latency_ms": {
+    "p50": 102.73,
+    "p95": 117.34,
+    "p99": 118.15
+  },
+  "completed_judgements": 20,
+  "pending_after_90s": 0,
+  "submit_to_verdict_ms": {
+    "p50": 14664.66,
+    "p95": 24304.1,
+    "p99": 24963.23
+  },
+  "verdict_counts": {
+    "accepted": 20
+  },
+  "note": "submit_to_verdict includes queue wait, execution and polling delay (<=250ms), not isolated queue delay",
+  "errors": []
+}
